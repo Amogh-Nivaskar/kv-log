@@ -120,8 +120,8 @@ int hashmap_add(hashmap_t *map, char *key, void *value)
     else
     {
         entry_t *entry = map->entries[idx];
-
-        while (entry->nxt != NULL)
+        entry_t *tail = NULL;
+        while (entry != NULL)
         {
             if (strcmp(entry->key, key) == 0)
             {
@@ -129,6 +129,7 @@ int hashmap_add(hashmap_t *map, char *key, void *value)
                 entry->value = value;
                 return 1;
             }
+            tail = entry;
             entry = entry->nxt;
         }
 
@@ -141,7 +142,7 @@ int hashmap_add(hashmap_t *map, char *key, void *value)
 
         newEntry->key = strdup(key);
         newEntry->value = value;
-        entry->nxt = newEntry;
+        tail->nxt = newEntry;
         map->size += 1;
     }
     return 1;

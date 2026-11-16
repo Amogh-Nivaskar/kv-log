@@ -11,8 +11,6 @@
 
 #include "hashmap.h"
 
-#define HEADER_SIZE 21
-
 typedef struct
 {
     uint32_t crc;
@@ -51,38 +49,64 @@ int bootup()
 
     while (1)
     {
-        size_t n = pread(log_fd, hdr, sizeof(header_t), offset);
-        if (n < sizeof(header_t))
+        ssize_t n = pread(log_fd, hdr, sizeof(header_t), offset);
+        if ((n < 0 || (size_t)n < sizeof(header_t)))
             break;
 
         size_t rec_size = sizeof(header_t) + hdr->key_len + hdr->val_len;
 
-        loc_t *loc = malloc(sizeof(loc_t));
-
-        loc->offset = offset;
-        loc->size = rec_size;
-
         uint8_t *buf = malloc(rec_size);
+
+        if (buf == NULL)
+        {
+            perror("malloc - buf");
+            free(hdr);
+            return 0;
+        }
 
         n = pread(log_fd, buf, rec_size, offset);
 
-        if (n < rec_size)
+        if ((n < 0 || (size_t)n < rec_size))
         {
             free(buf);
             break;
         }
 
-        char *key = malloc(hdr->key_len);
+        char *key = malloc(hdr->key_len + 1);
+
+        if (key == NULL)
+        {
+            perror("malloc - key");
+            free(buf);
+            free(hdr);
+            return 0;
+        }
+
         memcpy(key, buf + sizeof(header_t), hdr->key_len);
+        key[hdr->key_len] = '\0';
 
         if (hdr->is_deleted == true)
-        {
             hashmap_delete(&map, key);
-        }
         else
         {
+            loc_t *loc = malloc(sizeof(loc_t));
+
+            if (loc == NULL)
+            {
+                perror("malloc - loc");
+                free(buf);
+                free(key);
+                free(hdr);
+                return 0;
+            }
+
+            loc->offset = offset;
+            loc->size = rec_size;
             hashmap_add(&map, key, loc);
         }
+
+        free(key);
+        free(buf);
 
         offset += n;
     }
@@ -107,6 +131,12 @@ int put(char *key, char *value)
 
     uint8_t *buf = malloc(rec_size);
 
+    if (buf == NULL)
+    {
+        perror("malloc - buf");
+        return 0;
+    }
+
     memcpy(buf, &hdr, sizeof(hdr));
     memcpy(buf + sizeof(hdr), key, hdr.key_len);
     memcpy(buf + sizeof(hdr) + hdr.key_len, value, hdr.val_len);
@@ -114,9 +144,19 @@ int put(char *key, char *value)
     int n = pwrite(log_fd, buf, rec_size, write_offset);
 
     if (n < rec_size)
+    {
+        free(buf);
         return 0;
+    }
 
     loc_t *loc = malloc(sizeof(loc_t));
+
+    if (loc == NULL)
+    {
+        perror("malloc - loc");
+        free(buf);
+        return 0;
+    }
 
     loc->offset = write_offset;
     loc->size = rec_size;
@@ -144,20 +184,33 @@ int get(char *key, char **value)
 
     uint8_t *rcd = malloc(loc->size);
 
+    if (rcd == NULL)
+    {
+        perror("malloc");
+        return 0;
+    }
+
     ssize_t n = pread(log_fd, rcd, loc->size, loc->offset);
 
     if (n < 0)
     {
         perror("pread");
+        free(rcd);
         return 0;
     }
 
     if ((size_t)n < loc->size)
     {
+        free(rcd);
         return 0;
     }
 
-    *value = strdup((char *)(rcd + val_offset));
+    header_t *hdr = (header_t *)rcd;
+    char *v = malloc(hdr->val_len + 1);
+    memcpy(v, rcd + val_offset, hdr->val_len);
+    v[hdr->val_len] = '\0';
+
+    *value = v;
 
     free(rcd);
 
@@ -184,11 +237,16 @@ int delete(char *key)
     int n = pwrite(log_fd, buf, rec_size, write_offset);
 
     if (n < rec_size)
+    {
+        free(buf);
         return 0;
+    }
 
     hashmap_delete(&map, key);
 
     write_offset += rec_size;
+
+    free(buf);
 
     return 1;
 }
