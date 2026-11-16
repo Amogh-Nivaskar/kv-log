@@ -1,0 +1,37 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug kv",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/kv",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "make",
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "stopAtEntry": false,
+            "externalConsole": false,
+            "setupCommands": [
+                { "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ]
+        },
+        {
+            "name": "Debug open test file",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/${fileBasenameNoExtension}",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "make",
+            "MIMode": "gdb",
+            "miDebuggerPath": "/usr/bin/gdb",
+            "stopAtEntry": false,
+            "externalConsole": false,
+            "setupCommands": [
+                { "text": "-enable-pretty-printing", "ignoreFailures": true }
+            ]
+        }
+    ]
+}

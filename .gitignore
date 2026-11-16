@@ -1,0 +1,20 @@
+# Build outputs
+*.o
+kv
+test_*
+!test_*.c
+
+# Data files created by running the store / tests
+*.log
+
+# Crash dumps (from segfaults, failed asserts)
+core
+core.*
+vgcore.*
+
+# Editor / OS junk
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+.DS_Store
