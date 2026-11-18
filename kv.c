@@ -8,8 +8,10 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 #include "hashmap.h"
+#include "crc.h"
 
 typedef struct
 {
@@ -27,7 +29,7 @@ typedef struct
     size_t size;  // total record length (header + key + value)
 } loc_t;
 
-int write_offset = 0;
+off_t write_offset = 0;
 
 hashmap_t map;
 static int log_fd = -1;
@@ -43,49 +45,98 @@ int bootup()
         return 0;
     }
 
-    int offset = 0;
-    header_t *hdr = malloc(sizeof(header_t));
+    struct stat st;
+
+    if (fstat(log_fd, &st) == -1)
+    {
+        perror("fstat");
+        return 0;
+    }
+
+    off_t file_size = st.st_size;
+
+    off_t offset = 0;
+    header_t hdr;
+
     hashmap_init(&map, free);
 
     while (1)
     {
-        ssize_t n = pread(log_fd, hdr, sizeof(header_t), offset);
-        if ((n < 0 || (size_t)n < sizeof(header_t)))
-            break;
+        ssize_t n = pread(log_fd, &hdr, sizeof(header_t), offset);
 
-        size_t rec_size = sizeof(header_t) + hdr->key_len + hdr->val_len;
+        if (n < 0)
+        {
+            perror("pread");
+            goto fail;
+        }
+        if ((size_t)n < sizeof(header_t))
+        {
+            if (ftruncate(log_fd, offset) == -1)
+                perror("ftruncate");
+            break;
+        }
+
+        size_t rec_size = sizeof(header_t) + hdr.key_len + hdr.val_len;
+
+        if (rec_size > (size_t)file_size - offset)
+        {
+            if (ftruncate(log_fd, offset) == -1)
+                perror("ftruncate");
+            break;
+        }
 
         uint8_t *buf = malloc(rec_size);
 
         if (buf == NULL)
         {
             perror("malloc - buf");
-            free(hdr);
-            return 0;
+            goto fail;
         }
 
         n = pread(log_fd, buf, rec_size, offset);
 
-        if ((n < 0 || (size_t)n < rec_size))
+        if (n < 0)
         {
             free(buf);
+            perror("pread");
+            goto fail;
+        }
+        if ((size_t)n < rec_size)
+        {
+            free(buf);
+            if (ftruncate(log_fd, offset) == -1)
+                perror("ftruncate");
             break;
         }
 
-        char *key = malloc(hdr->key_len + 1);
+        if (hdr.crc != crc32(buf + sizeof(hdr.crc), rec_size - sizeof(hdr.crc)))
+        {
+            if (offset + (off_t)rec_size == file_size)
+            {
+                free(buf);
+                if (ftruncate(log_fd, offset) == -1)
+                    perror("ftruncate");
+                break;
+            }
+
+            fprintf(stderr, "corrupt record at offset %lld\n", (long long)offset);
+            free(buf);
+            goto fail;
+        }
+
+        char *key = malloc(hdr.key_len + 1);
 
         if (key == NULL)
         {
             perror("malloc - key");
             free(buf);
-            free(hdr);
-            return 0;
+            goto fail;
         }
 
-        memcpy(key, buf + sizeof(header_t), hdr->key_len);
-        key[hdr->key_len] = '\0';
+        memcpy(key, buf + sizeof(header_t), hdr.key_len);
+        key[hdr.key_len] = '\0';
 
-        if (hdr->is_deleted == true)
+        if (hdr.is_deleted == true)
             hashmap_delete(&map, key);
         else
         {
@@ -96,8 +147,7 @@ int bootup()
                 perror("malloc - loc");
                 free(buf);
                 free(key);
-                free(hdr);
-                return 0;
+                goto fail;
             }
 
             loc->offset = offset;
@@ -108,13 +158,21 @@ int bootup()
         free(key);
         free(buf);
 
-        offset += n;
+        offset += rec_size;
     }
 
-    free(hdr);
     write_offset = offset;
 
     return 1;
+
+fail:
+    if (log_fd != -1)
+    {
+        close(log_fd);
+        log_fd = -1;
+    }
+    hashmap_destroy(&map);
+    return 0;
 }
 
 int put(char *key, char *value)
@@ -140,6 +198,9 @@ int put(char *key, char *value)
     memcpy(buf, &hdr, sizeof(hdr));
     memcpy(buf + sizeof(hdr), key, hdr.key_len);
     memcpy(buf + sizeof(hdr) + hdr.key_len, value, hdr.val_len);
+
+    hdr.crc = crc32(buf + sizeof(hdr.crc), rec_size - sizeof(hdr.crc));
+    memcpy(buf, &hdr.crc, sizeof(hdr.crc));
 
     int n = pwrite(log_fd, buf, rec_size, write_offset);
 
@@ -206,6 +267,14 @@ int get(char *key, char **value)
     }
 
     header_t *hdr = (header_t *)rcd;
+
+    if (hdr->crc != crc32(rcd + sizeof(hdr->crc), loc->size - sizeof(hdr->crc)))
+    {
+        fprintf(stderr, "corrupt record at offset %lld\n", (long long)loc->offset);
+        free(rcd);
+        return -1;
+    }
+
     char *v = malloc(hdr->val_len + 1);
     memcpy(v, rcd + val_offset, hdr->val_len);
     v[hdr->val_len] = '\0';
@@ -231,8 +300,17 @@ int delete(char *key)
 
     uint8_t *buf = malloc(rec_size);
 
+    if (buf == NULL)
+    {
+        perror("malloc");
+        return 0;
+    }
+
     memcpy(buf, &hdr, sizeof(hdr));
     memcpy(buf + sizeof(hdr), key, hdr.key_len);
+
+    hdr.crc = crc32(buf + sizeof(hdr.crc), rec_size - sizeof(hdr.crc));
+    memcpy(buf, &hdr.crc, sizeof(hdr.crc));
 
     int n = pwrite(log_fd, buf, rec_size, write_offset);
 
