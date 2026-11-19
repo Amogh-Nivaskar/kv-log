@@ -158,7 +158,8 @@ int hashmap_get(hashmap_t *map, char *key, void **value)
     {
         if (strcmp(entry->key, key) == 0)
         {
-            *value = entry->value;
+            if (value != NULL)
+                *value = entry->value;
             return 1;
         }
         entry = entry->nxt;
@@ -170,7 +171,7 @@ int hashmap_delete(hashmap_t *map, char *key)
 {
 
     float loadfactor = (float)map->size / map->capacity;
-    if (loadfactor <= UPSIZE_THRESHOLD && map->capacity > INITIAL_CAPACITY)
+    if (loadfactor <= DOWNSIZE_THRESHOLD && map->capacity > INITIAL_CAPACITY)
     {
         int rs = hashmap_resize(map, map->capacity / 2);
         if (rs == 0)
@@ -195,6 +196,7 @@ int hashmap_delete(hashmap_t *map, char *key)
         free(entry->key);
         free_value_if_owned(map, entry->value);
         free(entry);
+        map->size -= 1;
         return 1;
     }
 
@@ -208,6 +210,7 @@ int hashmap_delete(hashmap_t *map, char *key)
             free(curr->key);
             free_value_if_owned(map, curr->value);
             free(curr);
+            map->size -= 1;
             return 1;
         }
         prev = curr;
@@ -232,4 +235,5 @@ void hashmap_destroy(hashmap_t *map)
     }
 
     free(map->entries);
+    map->size = 0;
 }
