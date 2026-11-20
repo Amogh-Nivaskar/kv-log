@@ -87,6 +87,8 @@ static int hashmap_resize(hashmap_t *map, int newCap)
     return 1;
 }
 
+// hashmap_add: copies key; takes ownership of value (freed with the destructor
+//   passed to hashmap_init, or never freed if that is NULL).
 int hashmap_add(hashmap_t *map, char *key, void *value)
 {
     float loadfactor = (float)map->size / map->capacity;
@@ -148,6 +150,8 @@ int hashmap_add(hashmap_t *map, char *key, void *value)
     return 1;
 }
 
+// hashmap_get: returns the stored pointer, not a copy; valid until the entry
+//   is overwritten, deleted, or the map is destroyed.
 int hashmap_get(hashmap_t *map, char *key, void **value)
 {
     int idx = hashmap_hash(key) % map->capacity;

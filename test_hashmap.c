@@ -1,6 +1,8 @@
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+
 #include "hashmap.h"
 
 void test_initialization_and_destroy()
@@ -61,7 +63,7 @@ void test_get_absent()
 void test_upsize()
 {
     hashmap_t map;
-    hashmap_init(&map, NULL);
+    hashmap_init(&map, free);
     int initial_capacity = map.capacity;
 
     int iters = 100;
@@ -69,10 +71,12 @@ void test_upsize()
     for (int i = 0; i < iters; i++)
     {
         char key[32];
-        char value[32];
+        char buf[32];
 
         snprintf(key, sizeof(key), "KEY_%d", i);
-        snprintf(value, sizeof(value), "VAL_%d", i);
+        snprintf(buf, sizeof(buf), "VAL_%d", i);
+
+        char *value = strdup(buf);
 
         assert(hashmap_add(&map, key, value) == 1);
         assert(map.size == i + 1);
@@ -126,7 +130,7 @@ void test_delete()
 void test_downsize()
 {
     hashmap_t map;
-    hashmap_init(&map, NULL);
+    hashmap_init(&map, free);
     int initial_capacity = map.capacity;
 
     int iters = 100;
@@ -134,10 +138,12 @@ void test_downsize()
     for (int i = 0; i < iters; i++)
     {
         char key[32];
-        char value[32];
+        char buf[32];
 
         snprintf(key, sizeof(key), "KEY_%d", i);
-        snprintf(value, sizeof(value), "VAL_%d", i);
+        snprintf(buf, sizeof(buf), "VAL_%d", i);
+
+        char *value = strdup(buf);
 
         assert(hashmap_add(&map, key, value) == 1);
         assert(map.size == i + 1);
@@ -147,7 +153,7 @@ void test_downsize()
 
     assert(grown_capacity > initial_capacity);
 
-    for (int i = 0; i < iters / 2; i++)
+    for (int i = 0; i < iters - 1; i++)
     {
         char key[32];
 
