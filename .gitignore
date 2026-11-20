@@ -1,6 +1,7 @@
 # Build outputs
 *.o
 kv
+build-asan/
 test_*
 !test_*.c
 
