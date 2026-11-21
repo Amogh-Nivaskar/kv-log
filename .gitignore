@@ -1,9 +1,6 @@
 # Build outputs
-*.o
-kv
+build/
 build-asan/
-test_*
-!test_*.c
 
 # Data files created by running the store / tests
 *.log
