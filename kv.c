@@ -8,10 +8,12 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <assert.h>
+#include <stdbool.h>
 
 #include "hashmap.h"
 #include "crc.h"
 #include "bytes.h"
+#include "kv.h"
 
 #define HEADER_SIZE 21
 
@@ -31,9 +33,13 @@ typedef struct
 } loc_t;
 
 off_t write_offset = 0;
-
 hashmap_t map;
 static int log_fd = -1;
+static sync_mode_t sync_mode;
+static uint64_t last_sync = 0;
+static off_t sync_offset;
+static uint64_t sync_interval;
+bool sync_failed = false;
 
 static void encode_header(uint8_t *out, const header_t *h)
 {
@@ -71,8 +77,53 @@ static void decode_header(const uint8_t *in, header_t *h)
     assert(p - in == HEADER_SIZE);
 }
 
-int bootup()
+static uint64_t get_timestamp_ms(void)
 {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+int should_sync(sync_mode_t mode, uint64_t now, uint64_t last_sync_time, uint64_t interval)
+{
+    if (mode == SYNC_ALWAYS)
+        return 1;
+
+    if (mode == SYNC_INTERVAL)
+        return now - last_sync_time >= interval;
+
+    return 0;
+}
+
+static int maybe_sync(off_t end_offset)
+{
+    uint64_t curr_timestamp = get_timestamp_ms();
+
+    if (should_sync(sync_mode, curr_timestamp, last_sync, sync_interval))
+    {
+        if (fdatasync(log_fd) == -1)
+        {
+            perror("fdatasync");
+            return 0;
+        }
+        last_sync = curr_timestamp;
+        sync_offset = end_offset;
+    }
+    return 1;
+}
+
+int bootup(sync_mode_t mode, int interval_ms)
+{
+    if (mode == SYNC_INTERVAL && interval_ms <= 0)
+    {
+        fprintf(stderr, "bootup: SYNC_INTERVAL needs interval_ms > 0\n");
+        return 0;
+    }
+
+    sync_mode = mode;
+    sync_interval = interval_ms;
+    sync_failed = false;
 
     log_fd = open("data.log", O_RDWR | O_CREAT, 0644);
 
@@ -221,6 +272,8 @@ int bootup()
     }
 
     write_offset = offset;
+    sync_offset = write_offset;
+    last_sync = get_timestamp_ms();
 
     return 1;
 
@@ -236,6 +289,9 @@ fail:
 
 int put(char *key, char *value)
 {
+    if (sync_failed == true)
+        return 0;
+
     header_t hdr = {
         .crc = 0,
         .flags = 1,
@@ -265,6 +321,14 @@ int put(char *key, char *value)
     if (n < rec_size)
     {
         free(buf);
+        return 0;
+    }
+
+    if (maybe_sync(write_offset + rec_size) == 0)
+    {
+        fprintf(stderr, "maybe_sync failed\n");
+        free(buf);
+        sync_failed = true;
         return 0;
     }
 
@@ -363,6 +427,9 @@ int get(char *key, char **value)
 
 int delete(char *key)
 {
+    if (sync_failed == true)
+        return 0;
+
     header_t hdr = {
         .crc = 0,
         .flags = 0,
@@ -401,6 +468,14 @@ int delete(char *key)
         return 0;
     }
 
+    if (maybe_sync(write_offset + rec_size) == 0)
+    {
+        fprintf(stderr, "maybe_sync failed\n");
+        free(buf);
+        sync_failed = true;
+        return 0;
+    }
+
     r = hashmap_delete(&map, key);
 
     if (r == 0)
@@ -419,7 +494,16 @@ int delete(char *key)
 
 void shutdown()
 {
+    if (log_fd == -1)
+        return;
+
+    if (fdatasync(log_fd) == -1)
+    {
+        perror("fdatasync");
+    }
     close(log_fd);
+    log_fd = -1;
+
     hashmap_destroy(&map);
 }
 
