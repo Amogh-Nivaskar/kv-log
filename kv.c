@@ -13,6 +13,7 @@
 #include "hashmap.h"
 #include "crc.h"
 #include "bytes.h"
+#include "io.h"
 #include "kv.h"
 
 #define HEADER_SIZE 21
@@ -151,11 +152,11 @@ int bootup(sync_mode_t mode, int interval_ms)
 
     while (1)
     {
-        ssize_t n = pread(log_fd, rawhdr, HEADER_SIZE, offset);
+        ssize_t n = read_full(log_fd, rawhdr, HEADER_SIZE, offset);
 
         if (n < 0)
         {
-            perror("pread");
+            perror("read_full - header");
             goto fail;
         }
 
@@ -185,12 +186,12 @@ int bootup(sync_mode_t mode, int interval_ms)
             goto fail;
         }
 
-        n = pread(log_fd, buf, rec_size, offset);
+        n = read_full(log_fd, buf, rec_size, offset);
 
         if (n < 0)
         {
             free(buf);
-            perror("pread");
+            perror("read_full - record");
             goto fail;
         }
         if ((size_t)n < rec_size)
@@ -316,11 +317,15 @@ int put(char *key, char *value)
     hdr.crc = crc32(buf + sizeof(hdr.crc), rec_size - sizeof(hdr.crc));
     put_u32(buf, hdr.crc);
 
-    int n = pwrite(log_fd, buf, rec_size, write_offset);
-
-    if (n < rec_size)
+    if (write_full(log_fd, buf, rec_size, write_offset) < 0)
     {
+        perror("write_full");
         free(buf);
+
+        // drop any half-written record so the log still ends on a record boundary
+        if (ftruncate(log_fd, write_offset) == -1)
+            perror("ftruncate");
+
         return 0;
     }
 
@@ -381,11 +386,11 @@ int get(char *key, char **value)
         return 0;
     }
 
-    ssize_t n = pread(log_fd, rcd, loc->size, loc->offset);
+    ssize_t n = read_full(log_fd, rcd, loc->size, loc->offset);
 
     if (n < 0)
     {
-        perror("pread");
+        perror("read_full");
         free(rcd);
         return 0;
     }
@@ -460,11 +465,15 @@ int delete(char *key)
     hdr.crc = crc32(buf + sizeof(hdr.crc), rec_size - sizeof(hdr.crc));
     put_u32(buf, hdr.crc);
 
-    int n = pwrite(log_fd, buf, rec_size, write_offset);
-
-    if (n < rec_size)
+    if (write_full(log_fd, buf, rec_size, write_offset) < 0)
     {
+        perror("write_full");
         free(buf);
+
+        // drop any half-written record so the log still ends on a record boundary
+        if (ftruncate(log_fd, write_offset) == -1)
+            perror("ftruncate");
+
         return 0;
     }
 
